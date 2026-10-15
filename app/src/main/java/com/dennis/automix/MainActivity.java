@@ -30,7 +30,7 @@ import java.util.zip.*;
 
 /** Minimal dependency-free Android UI for the offline 2–4 track proof of concept. */
 public final class MainActivity extends Activity {
-    private static final int ADD_WAV=100, IMPORT_ZIP=101, SAVE_WAV=102, SAVE_QC=103;
+    private static final int ADD_WAV=100, IMPORT_ZIP=101, SAVE_WAV=102, SAVE_QC=103, SAVE_ALT=104;
     private static final int BG=Color.rgb(12,16,25), CARD=Color.rgb(26,34,48);
     private static final int ACCENT=Color.rgb(77,219,192), TEXT=Color.WHITE;
     private static final int MUTED=Color.rgb(169,185,202);
@@ -40,9 +40,9 @@ public final class MainActivity extends Activity {
     private LinearLayout entries;
     private TextView status, summary;
     private ProgressBar progress;
-    private Button add, zip, clear, run, save, qc;
+    private Button add, zip, clear, run, save, saveAlt, qc;
     private volatile boolean busy;
-    private File rendered, qcFile;
+    private File rendered, alternate, qcFile;
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         TextView title=text("DENNIS",12,ACCENT,true);root.addView(title);
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
-        TextView subtitle=text("OFFLINE  •  INTELLIGENT WAV MIXING  •  v0.1.0",11,MUTED,false);
+        TextView subtitle=text("OFFLINE  •  INTELLIGENT WAV MIXING  •  v0.1.1",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
 
         LinearLayout importPanel=panel(root);
@@ -77,7 +77,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout mixPanel=panel(root);
         mixPanel.addView(text("02  AUTOMATIC MIX",14,TEXT,true));
-        TextView mixHelp=text("Bounded ±4 dB role-aware balancing, gentle subsonic filtering, two-pass peak guard. No mastering or artificial loudness boost.",12,MUTED,false);
+        TextView mixHelp=text("Two-stem: preserve original stem balance and optionally render a +1 dB vocal-focus comparison. Four-stem: guarded automatic balancing. Mix-only premaster.",12,MUTED,false);
         mixHelp.setPadding(0,dp(8),0,dp(8));
         mixPanel.addView(mixHelp);
         run=button("AUTO MIX WAV TRACKS",true);
@@ -96,9 +96,10 @@ public final class MainActivity extends Activity {
         summary=text("Processing: 24-bit stereo WAV with 6 dBFS sample-peak headroom. This is a premaster, not a mastered release.",12,MUTED,false);
         summary.setPadding(0,dp(8),0,dp(7));
         exportPanel.addView(summary);
-        save=button("SAVE PREMASTER WAV",true);
+        save=button("SAVE ORIGINAL-BALANCE PREMASTER",true);
+        saveAlt=button("SAVE VOCAL +1 dB COMPARISON",false);
         qc=button("Save mix QC / recipe JSON",false);
-        exportPanel.addView(save);exportPanel.addView(qc);
+        exportPanel.addView(save);exportPanel.addView(saveAlt);exportPanel.addView(qc);
         TextView foot=text("Independent from Dennis AI Mastering Lab. No cloud processing, accounts or file uploads.",11,MUTED,false);
         foot.setPadding(dp(2),dp(12),dp(2),0);root.addView(foot);
         setContentView(scroll);
@@ -108,13 +109,15 @@ public final class MainActivity extends Activity {
         clear.setOnClickListener(v->{
             if(busy)return;
             for(AutoMixEngine.Track t:tracks)t.file.delete();
-            tracks.clear();rendered=null;qcFile=null;progress.setProgress(0);
+            tracks.clear();rendered=null;alternate=null;qcFile=null;progress.setProgress(0);
             updateTracks();status.setText("Tracks cleared.");summary.setText("No premaster rendered.");
             updateButtons();
         });
         run.setOnClickListener(v->startMix());
         save.setOnClickListener(v->saveDocument(SAVE_WAV,"audio/wav",
                  "AutoMix_Premaster_24bit.wav"));
+        saveAlt.setOnClickListener(v->saveDocument(SAVE_ALT,"audio/wav",
+                 "AutoMix_VocalFocusPlus1dB_24bit.wav"));
         qc.setOnClickListener(v->saveDocument(SAVE_QC,"application/json",
                  "AutoMix_Mix_QC.json"));
         updateTracks();updateButtons();
@@ -138,7 +141,7 @@ public final class MainActivity extends Activity {
         startActivityForResult(i,IMPORT_ZIP);
     }
     private void saveDocument(int request,String mime,String filename){
-        File file=request==SAVE_WAV?rendered:qcFile;
+        File file=request==SAVE_WAV?rendered:request==SAVE_ALT?alternate:qcFile;
         if(busy||file==null||!file.isFile()){notice("No completed output.");return;}
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
@@ -173,7 +176,7 @@ public final class MainActivity extends Activity {
                     }
                     runOnUiThread(()->{
                         tracks.addAll(imported);
-                        rendered=null;qcFile=null;
+                        rendered=null;alternate=null;qcFile=null;
                         updateTracks();setBusy(false,"Imported "+imported.size()+" WAV file(s).");
                     });
                 }catch(Exception e){
@@ -216,7 +219,7 @@ public final class MainActivity extends Activity {
                     }
                     if(imported.isEmpty())throw new IOException("The ZIP contains no supported WAV files.");
                     runOnUiThread(()->{
-                        tracks.addAll(imported);rendered=null;qcFile=null;
+                        tracks.addAll(imported);rendered=null;alternate=null;qcFile=null;
                         updateTracks();setBusy(false,"Imported "+imported.size()+" WAVs from ZIP.");
                     });
                 }catch(Exception e){
@@ -224,9 +227,9 @@ public final class MainActivity extends Activity {
                     failed(e);
                 }
             });
-        }else if(request==SAVE_WAV||request==SAVE_QC){
+        }else if(request==SAVE_WAV||request==SAVE_QC||request==SAVE_ALT){
             Uri uri=data.getData();if(uri==null)return;
-            File file=request==SAVE_WAV?rendered:qcFile;
+            File file=request==SAVE_WAV?rendered:request==SAVE_ALT?alternate:qcFile;
             setBusy(true,"Saving output...");
             executor.execute(()->{
                 try(InputStream in=new BufferedInputStream(new FileInputStream(file),64*1024);
@@ -252,16 +255,26 @@ public final class MainActivity extends Activity {
                         progress.setProgress(pct);
                         status.setText(pct+"%  •  "+message);
                     }));
-                JSONObject report=makeReport(result);
+                AutoMixEngine.Result focused=null;
+                File focusedFile=null;
+                if(input.size()==2 && hasNamedVocal(input)){
+                    runOnUiThread(()->setBusy(true,"Rendering vocal-focus comparison..."));
+                    focusedFile=new File(outputFolder(),"AutoMix_VocalFocusPlus1dB_24bit.wav");
+                    focused=AutoMixEngine.mix(input,focusedFile,AutoMixEngine.MixMode.VOCAL_FOCUS,null);
+                }
+                final AutoMixEngine.Result focusResult=focused;
+                final File finalFocusedFile=focusedFile;
+                JSONObject report=makeReport(result,focusResult);
                 File qcOutput=new File(outputFolder(),"AutoMix_Mix_QC.json");
                 try(Writer writer=new OutputStreamWriter(new FileOutputStream(qcOutput),"UTF-8")){
                     writer.write(report.toString(2));
                 }
                 runOnUiThread(()->{
-                    rendered=output;qcFile=qcOutput;
+                    rendered=output;alternate=finalFocusedFile;qcFile=qcOutput;
                     String note=String.format(Locale.US,
-                      "PREMASTER READY\n%d tracks · %d Hz · 24-bit stereo\nPeak %.2f dBFS (sample) · headroom trim %.2f dB\nNot mastered: listen to the mix before mastering.",
-                      result.tracks.size(),result.sampleRate,result.peakDbFs,result.outputGainDb);
+                      "PREMASTER READY\n%d tracks · %d Hz · 24-bit stereo\nPeak %.2f dBFS (sample) · trim %.2f dB\n%s\nNot mastered: A/B compare before mastering.",
+                      result.tracks.size(),result.sampleRate,result.peakDbFs,result.outputGainDb,
+                      finalFocusedFile!=null?"Unity stem balance plus +1 dB vocal A/B candidate":"Guarded automatic stem mix");
                     summary.setText(note);
                     setBusy(false,"Mix complete. Use Save Premaster WAV to export.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -272,10 +285,19 @@ public final class MainActivity extends Activity {
             }
         });
     }
-    private JSONObject makeReport(AutoMixEngine.Result r)throws Exception{
+    private static boolean hasNamedVocal(List<AutoMixEngine.Track> input){
+        for(AutoMixEngine.Track t:input){
+            String n=t.name.toLowerCase(Locale.ROOT);
+            if(n.contains("vocal")||n.contains("voice")||n.contains("vox"))return true;
+        }
+        return false;
+    }
+    private JSONObject makeReport(AutoMixEngine.Result r,AutoMixEngine.Result focus)throws Exception{
         JSONObject result=new JSONObject();
         result.put("application","Dennis AI AutoMix Studio");
-        result.put("version","0.1.0");
+        result.put("version","0.1.1");
+        result.put("mix_mode",r.mode.name());
+        result.put("two_stem_unity_balance",r.tracks.size()==2);
         result.put("type","mix-only premaster; not mastered");
         result.put("sample_rate",r.sampleRate);
         result.put("frames",r.frames);
@@ -284,7 +306,22 @@ public final class MainActivity extends Activity {
         result.put("output_trim_db",r.outputGainDb);
         result.put("original_mix_peak",r.preScalePeak);
         result.put("target_peak_dbfs_sample",-6.0);
-        result.put("processing","role-aware bounded gain, conservative HPF, offline double pass");
+        result.put("processing",r.tracks.size()==2?"transparent sum, no EQ/HPF, sample-peak trim only":"bounded role gains and gentle HPF, sample-peak trim");
+        if(focus!=null){
+            JSONObject ab=new JSONObject();
+            ab.put("filename","AutoMix_VocalFocusPlus1dB_24bit.wav");
+            ab.put("mode",focus.mode.name());
+            ab.put("peak_dbfs_sample",focus.peakDbFs);
+            ab.put("output_trim_db",focus.outputGainDb);
+            JSONArray gains=new JSONArray();
+            for(AutoMixEngine.Analysis a:focus.tracks){
+                JSONObject track=new JSONObject();
+                track.put("name",a.name);track.put("gain_db",a.gainDb);
+                gains.put(track);
+            }
+            ab.put("tracks",gains);
+            result.put("ab_candidate",ab);
+        }
         JSONArray stems=new JSONArray();
         for(AutoMixEngine.Analysis a:r.tracks){
             JSONObject s=new JSONObject();
@@ -294,7 +331,7 @@ public final class MainActivity extends Activity {
             stems.put(s);
         }
         result.put("tracks",stems);
-        result.put("note","No true-peak measurement or loudness mastering in version 0.1.0.");
+        result.put("note","No true-peak measurement or loudness mastering in v0.1.1. Level-match before A/B listening.");
         return result;
     }
     private String getFilename(Uri uri){
@@ -361,8 +398,9 @@ public final class MainActivity extends Activity {
         clear.setEnabled(!busy&&!tracks.isEmpty());
         run.setEnabled(!busy&&tracks.size()>=2);
         save.setEnabled(!busy&&rendered!=null&&rendered.isFile());
+        saveAlt.setEnabled(!busy&&alternate!=null&&alternate.isFile());
         qc.setEnabled(!busy&&qcFile!=null&&qcFile.isFile());
-        for(Button b:new Button[]{add,zip,clear,run,save,qc})
+        for(Button b:new Button[]{add,zip,clear,run,save,saveAlt,qc})
             b.setAlpha(b.isEnabled()?1f:.4f);
     }
     private void updateTracks(){
