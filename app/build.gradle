@@ -5,11 +5,11 @@ android {
     namespace 'com.dennis.automix'
     compileSdk 35
     defaultConfig {
-        applicationId 'com.dennis.automix.test020'
+        applicationId 'com.dennis.automix.test021'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '0.2.0'
+        versionCode 4
+        versionName '0.2.1-test'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
