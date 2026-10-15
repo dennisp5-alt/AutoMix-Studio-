@@ -3,6 +3,9 @@ package com.dennis.automix.audio;
 import java.io.*;
 import java.util.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.AtomicMoveNotSupportedException;
 
 /**
  * Pure-Java offline block-streaming WAV mixer. No Android APIs and no mastering stage.
@@ -64,6 +67,7 @@ public final class AutoMixEngine {
             throw new IOException("Select between 2 and 4 WAV tracks.");
         if(output==null) throw new IOException("Output location required.");
         List<WavReader> readers = new ArrayList<>();
+        File unfinished=new File(output.getAbsolutePath()+".part");
         boolean success=false;
         try {
             int rate=-1;
@@ -120,9 +124,15 @@ public final class AutoMixEngine {
             File parent=output.getAbsoluteFile().getParentFile();
             if(parent!=null && !parent.exists() && !parent.mkdirs())
                 throw new IOException("Unable to create output folder.");
-            try(WavWriter writer=new WavWriter(output,rate,maxFrames)){
+            try(WavWriter writer=new WavWriter(unfinished,rate,maxFrames)){
                 render(readers,gains,analyses,rate,maxFrames,writer,scale,
                         callback,72,98);
+            }
+            try {
+                Files.move(unfinished.toPath(),output.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);
+            } catch(AtomicMoveNotSupportedException unsupported) {
+                Files.move(unfinished.toPath(),output.toPath(),StandardCopyOption.REPLACE_EXISTING);
             }
             success=true;
             if(callback!=null) callback.report(100,"Premaster finished");
@@ -131,7 +141,7 @@ public final class AutoMixEngine {
                     20*Math.log10(scale),analyses);
         } finally {
             for(WavReader r:readers) try { r.close(); } catch(IOException ignored){}
-            if(!success) output.delete();
+            if(!success) unfinished.delete();
         }
     }
     private static Stats scan(WavReader reader) throws IOException {
