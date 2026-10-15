@@ -28,13 +28,14 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.zip.*;
 
-/** Minimal dependency-free Android UI for the offline 2–4 track proof of concept. */
+/** Offline Android 2–12 track premaster UI; sound-preserving multi-stem extension. */
 public final class MainActivity extends Activity {
     private static final int ADD_WAV=100, IMPORT_ZIP=101, SAVE_WAV=102, SAVE_QC=103, SAVE_ALT=104;
     private static final int BG=Color.rgb(12,16,25), CARD=Color.rgb(26,34,48);
     private static final int ACCENT=Color.rgb(77,219,192), TEXT=Color.WHITE;
     private static final int MUTED=Color.rgb(169,185,202);
     private static final long MAX_FILE=1_300_000_000L, MAX_ZIP=3_000_000_000L;
+    private static final int MAX_TRACKS=AutoMixEngine.MAX_TRACKS;
     private final ExecutorService executor=Executors.newSingleThreadExecutor();
     private final ArrayList<AutoMixEngine.Track> tracks=new ArrayList<>();
     private LinearLayout entries;
@@ -57,7 +58,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         TextView title=text("DENNIS",12,ACCENT,true);root.addView(title);
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
-        TextView subtitle=text("OFFLINE  •  INTELLIGENT WAV MIXING  •  v0.2.0",11,MUTED,false);
+        TextView subtitle=text("OFFLINE  •  WAV PREMIX  •  v0.2.1 TEST",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
 
         LinearLayout importPanel=panel(root);
@@ -66,7 +67,7 @@ public final class MainActivity extends Activity {
         zip=button("Import ZIP of WAV stems",false);
         importPanel.addView(add);
         importPanel.addView(zip);
-        TextView inputHelp=text("Select 2–4 start-aligned mono or stereo WAVs. A second selection adds to the current set.",12,MUTED,false);
+        TextView inputHelp=text("Select 2–12 start-aligned mono or stereo WAVs (or one ZIP). Multiple selections add tracks. 3 GB uncompressed ZIP limit.",12,MUTED,false);
         inputHelp.setPadding(0,dp(7),0,0);importPanel.addView(inputHelp);
         entries=new LinearLayout(this);
         entries.setOrientation(LinearLayout.VERTICAL);
@@ -77,7 +78,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout mixPanel=panel(root);
         mixPanel.addView(text("02  AUTOMATIC MIX",14,TEXT,true));
-        TextView mixHelp=text("Two-stem: preserves original balance (+1 dB vocal A/B). Four-stem: analyzes co-active vocal/instrument masking, makes gentle EQ/level changes, and exports a transparent reference.",12,MUTED,false);
+        TextView mixHelp=text("2 stems: preserved balance (+1 dB vocal A/B). 4 stems: guarded co-active masking analysis plus reference. 5–12 stems: transparent, peak-safe premix; automatic instrument balancing is not yet validated.",12,MUTED,false);
         mixHelp.setPadding(0,dp(8),0,dp(8));
         mixPanel.addView(mixHelp);
         run=button("AUTO MIX WAV TRACKS",true);
@@ -163,8 +164,8 @@ public final class MainActivity extends Activity {
             executor.execute(()->{
                 ArrayList<AutoMixEngine.Track> imported=new ArrayList<>();
                 try{
-                    if(uris.size()+tracks.size()>4)
-                        throw new IOException("Four tracks maximum in this version. Clear tracks first.");
+                    if(uris.size()+tracks.size()>MAX_TRACKS)
+                        throw new IOException("Twelve tracks maximum in this test version. Clear tracks first.");
                     for(Uri uri:uris){
                         String filename=getFilename(uri);
                         if(!filename.toLowerCase(Locale.ROOT).endsWith(".wav"))
@@ -198,8 +199,8 @@ public final class MainActivity extends Activity {
                             if(entry.isDirectory()||!entry.getName().toLowerCase(Locale.ROOT).endsWith(".wav")){
                                 zis.closeEntry();continue;
                             }
-                            if(imported.size()+tracks.size()>=4)
-                                throw new IOException("ZIP contains more WAVs than the 4-track limit.");
+                            if(imported.size()+tracks.size()>=MAX_TRACKS)
+                                throw new IOException("ZIP contains more WAVs than the 12-track limit.");
                             String name=new File(entry.getName().replace('\\','/')).getName();
                             File target=freshInput(name);
                             long length=0;
@@ -243,7 +244,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void startMix(){
-        if(busy||tracks.size()<2||tracks.size()>4){notice("Import 2–4 WAV tracks first.");return;}
+        if(busy||tracks.size()<2||tracks.size()>MAX_TRACKS){notice("Import 2–12 WAV tracks first.");return;}
         ArrayList<AutoMixEngine.Track> input=new ArrayList<>(tracks);
         setBusy(true,"Analysing tracks...");
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -278,7 +279,9 @@ public final class MainActivity extends Activity {
                     save.setText(result.tracks.size()==2?
                         "SAVE ORIGINAL-BALANCE PREMASTER":"SAVE AUTO MIX PREMASTER");
                     saveAlt.setText(result.tracks.size()==4?
-                        "SAVE 4-STEM TRANSPARENT REFERENCE":"SAVE VOCAL +1 dB COMPARISON");
+                        "SAVE 4-STEM TRANSPARENT REFERENCE":
+                         result.tracks.size()==2?"SAVE VOCAL +1 dB COMPARISON":
+                         "NO COMPARISON FOR THIS TRACK COUNT");
                     String note=String.format(Locale.US,
                       "PREMASTER READY\n%d tracks · %d Hz · 24-bit stereo\nPeak %.2f dBFS (sample) · trim %.2f dB\n%s\nNot mastered: A/B compare before mastering.",
                       result.tracks.size(),result.sampleRate,result.peakDbFs,result.outputGainDb,
@@ -303,7 +306,8 @@ public final class MainActivity extends Activity {
     private JSONObject makeReport(AutoMixEngine.Result r,AutoMixEngine.Result focus)throws Exception{
         JSONObject result=new JSONObject();
         result.put("application","Dennis AI AutoMix Studio");
-        result.put("version","0.2.0");
+        result.put("version","0.2.1-test");
+        result.put("multi_stem_source_levels_preserved",r.tracks.size()>4);
         result.put("mix_mode",r.mode.name());
         result.put("two_stem_unity_balance",r.tracks.size()==2);
         result.put("four_stem_roles_verified",r.fourStemRecognized);
@@ -319,7 +323,8 @@ public final class MainActivity extends Activity {
         result.put("target_peak_dbfs_sample",-6.0);
         result.put("processing",r.tracks.size()==2?"transparent two-stem sum, no EQ, sample-peak trim only":
             r.tracks.size()==4?"co-active analysis, guarded subtractive EQ and level decisions (if justified), peak trim":
-            "legacy three-stem gains and HPF, sample-peak trim");
+            r.tracks.size()==3?"legacy three-stem gains and HPF, sample-peak trim":
+            "5–12 stem transparent sum; all source gains and tones retained; common sample-peak trim only");
         if(focus!=null){
             JSONObject ab=new JSONObject();
             ab.put("filename",focus.mode==AutoMixEngine.MixMode.STEM_REFERENCE?
@@ -409,8 +414,8 @@ public final class MainActivity extends Activity {
         updateButtons();
     }
     private void updateButtons(){
-        add.setEnabled(!busy&&tracks.size()<4);
-        zip.setEnabled(!busy&&tracks.size()<4);
+        add.setEnabled(!busy&&tracks.size()<MAX_TRACKS);
+        zip.setEnabled(!busy&&tracks.size()<MAX_TRACKS);
         clear.setEnabled(!busy&&!tracks.isEmpty());
         run.setEnabled(!busy&&tracks.size()>=2);
         save.setEnabled(!busy&&rendered!=null&&rendered.isFile());
