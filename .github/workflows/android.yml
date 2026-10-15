@@ -1,7 +1,7 @@
-name: AutoMix Studio v0.2.0 — Android APK + DSP regression
+name: AutoMix Studio v0.2.1 — Android APK + DSP regression
 on:
   push:
-    branches: [main]
+    branches: [main, experiment/automix-12-stems-v021]
   workflow_dispatch:
 permissions:
   contents: write
@@ -34,24 +34,25 @@ jobs:
         run: |
           unzip -tq app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep "launchable-activity: name='com.dennis.automix.MainActivity'"
-          cp app/build/outputs/apk/debug/app-debug.apk Dennis-AutoMix-Studio-v0.2.0-TEST.apk
-          sha256sum Dennis-AutoMix-Studio-v0.2.0-TEST.apk > SHA256SUMS.txt
+          cp app/build/outputs/apk/debug/app-debug.apk Dennis-AutoMix-Studio-v0.2.1-TEST.apk
+          sha256sum Dennis-AutoMix-Studio-v0.2.1-TEST.apk > SHA256SUMS.txt
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Dennis-AutoMix-Studio-v0.2.0-TEST-APK
+          name: Dennis-AutoMix-Studio-v0.2.1-TEST-APK
           path: |
-            Dennis-AutoMix-Studio-v0.2.0-TEST.apk
+            Dennis-AutoMix-Studio-v0.2.1-TEST.apk
             SHA256SUMS.txt
           retention-days: 30
       - name: Publish downloadable private-repo prerelease
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.2.0-test-${GITHUB_RUN_NUMBER}" \
-            Dennis-AutoMix-Studio-v0.2.0-TEST.apk SHA256SUMS.txt \
+          gh release create "v0.2.1-test-${GITHUB_RUN_NUMBER}" \
+            Dennis-AutoMix-Studio-v0.2.1-TEST.apk SHA256SUMS.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
-            --title "AutoMix Studio v0.2.0 — TEST build ${GITHUB_RUN_NUMBER}" \
-            --notes "Experimental offline 2–4 track WAV mixer with co-active four-stem intelligence and A/B transparent reference. Premaster only, not mastered. Test with copies of source files. SHA256SUMS.txt included." \
+            --title "AutoMix Studio v0.2.1 — TEST build ${GITHUB_RUN_NUMBER}" \
+            --notes "Experimental offline 2–12 stem WAV premixer. Two- and four-stem DSP retained; 5–12 preserve source levels and EQ. Premaster only. SHA256SUMS.txt included." \
             --prerelease
