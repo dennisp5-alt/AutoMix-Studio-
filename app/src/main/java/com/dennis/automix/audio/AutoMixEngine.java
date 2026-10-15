@@ -17,7 +17,7 @@ public final class AutoMixEngine {
     private static final double TARGET_PEAK = Math.pow(10.0, -6.0 / 20.0);
     private static final double MAX_STEM_GAIN_DB = 4.0;
     private AutoMixEngine() {}
-    public enum MixMode { AUTO, VOCAL_FOCUS }
+    public enum MixMode { AUTO, VOCAL_FOCUS, STEM_REFERENCE }
 
     public interface Progress {
         void report(int percentage, String message);
@@ -32,12 +32,13 @@ public final class AutoMixEngine {
         public final double peak, activeRms;
         public final long frames;
         public final int channels;
-        public final double gainDb;
+        public final double gainDb, eqDb, eqHz;
         public Analysis(String name, String role, double peak, double activeRms,
-                        long frames, int channels, double gainDb) {
+                        long frames, int channels, double gainDb,double eqDb,double eqHz) {
             this.name=name; this.role=role; this.peak=peak;
             this.activeRms=activeRms; this.frames=frames;
             this.channels=channels; this.gainDb=gainDb;
+            this.eqDb=eqDb;this.eqHz=eqHz;
         }
     }
     public static final class Result {
@@ -47,9 +48,15 @@ public final class AutoMixEngine {
         public final double preScalePeak, peakDbFs, outputGainDb;
         public final List<Analysis> tracks;
         public final MixMode mode;
+        public final String mixNote;
+        public final boolean fourStemRecognized;
+        public final double coactiveSeconds;
         Result(File output, int rate, long frames, double preScalePeak, double peakDbFs,
-               double outputGainDb, List<Analysis> tracks,MixMode mode) {
-            this.mode=mode;
+               double outputGainDb, List<Analysis> tracks,MixMode mode,
+               String mixNote,boolean fourStemRecognized,double coactiveSeconds) {
+            this.mode=mode;this.mixNote=mixNote;
+            this.fourStemRecognized=fourStemRecognized;
+            this.coactiveSeconds=coactiveSeconds;
             this.output=output; sampleRate=rate; this.frames=frames;
             this.preScalePeak=preScalePeak; this.peakDbFs=peakDbFs;
             this.outputGainDb=outputGainDb;
@@ -73,6 +80,10 @@ public final class AutoMixEngine {
         if (inputs == null || inputs.size() < 2 || inputs.size() > 4)
             throw new IOException("Select between 2 and 4 WAV tracks.");
         if(output==null) throw new IOException("Output location required.");
+        if(mode==MixMode.VOCAL_FOCUS && inputs.size()!=2)
+            throw new IOException("Vocal focus is only available for two stems.");
+        if(mode==MixMode.STEM_REFERENCE && inputs.size()!=4)
+            throw new IOException("Four-stem reference requires exactly four WAVs.");
         List<WavReader> readers = new ArrayList<>();
         File unfinished=new File(output.getAbsolutePath()+".part");
         boolean success=false;
@@ -108,6 +119,9 @@ public final class AutoMixEngine {
             double median=nonzero[nonzero.length/2];
             if(nonzero.length%2==0)
                 median=(nonzero[nonzero.length/2]+nonzero[nonzero.length/2-1])*0.5;
+            FourStemIntelligence.Plan plan=null;
+            if(inputs.size()==4 && mode==MixMode.AUTO)
+                plan=FourStemIntelligence.inspect(inputs,readers,rms,rate);
             double[] gains=new double[stats.size()];
             List<Analysis> analyses=new ArrayList<>();
             boolean twoTrack=inputs.size()==2;
@@ -122,10 +136,15 @@ public final class AutoMixEngine {
                 // Vocal pauses and instrumental-only passages bias the global energy.
                 if(twoTrack) dB=(mode==MixMode.VOCAL_FOCUS &&
                     "vocals".equals(role) && rms[i]>=0.0000001)?1.0:0.0;
+                // A/B reference is unity and unprocessed; intelligent four-stem adjustments
+                // are limited to <=0.9 dB level trims and <=0.75 dB presence-band cut.
+                if(inputs.size()==4) dB=plan==null?0:plan.gainDb[i];
+                double eqDb=plan==null?0:plan.eqDb[i];
+                double eqHz=plan==null?0:plan.eqHz[i];
                 gains[i]=Math.pow(10.0,dB/20.0);
                 Stats s=stats.get(i);
                 analyses.add(new Analysis(inputs.get(i).name,role,s.peak,rms[i],
-                        s.frames,s.channels,dB));
+                        s.frames,s.channels,dB,eqDb,eqHz));
             }
             double peak=render(readers,gains,analyses,rate,maxFrames,null,1.0,
                     callback,40,68);
@@ -149,7 +168,12 @@ public final class AutoMixEngine {
             if(callback!=null) callback.report(100,"Premaster finished");
             return new Result(output,rate,maxFrames,peak,
                     20*Math.log10(Math.max(0.000000000001,peak*scale)),
-                    20*Math.log10(scale),analyses,mode);
+                    20*Math.log10(scale),analyses,mode,
+                    plan!=null?plan.note:inputs.size()==4?
+                      "Four-stem transparent reference; unity gains, no EQ.":
+                      inputs.size()==2?"Two-stem balance preserved.":"Legacy three-stem mix.",
+                    plan!=null&&plan.recognized,
+                    plan!=null?plan.coactiveSeconds:0);
         } finally {
             for(WavReader r:readers) try { r.close(); } catch(IOException ignored){}
             if(!success) unfinished.delete();
@@ -185,10 +209,17 @@ public final class AutoMixEngine {
         int n=readers.size();
         float[][] buffer=new float[n][BLOCK*2];
         HighPass[][] filters=new HighPass[n][2];
+        FourStemIntelligence.Bell[][] eq=new FourStemIntelligence.Bell[n][2];
         for(int t=0;t<n;t++){
             readers.get(t).rewind();
             double cutoff="vocals".equals(analyses.get(t).role)?38:24;
-            for(int c=0;c<2;c++) filters[t][c]=new HighPass(rate,cutoff);
+            for(int c=0;c<2;c++){
+                // The previous three-stem path is left unchanged.
+                if(n==3) filters[t][c]=new HighPass(rate,cutoff);
+                Analysis a=analyses.get(t);
+                if(a.eqDb<0 && a.eqHz>0 && a.eqHz<rate*0.45)
+                    eq[t][c]=new FourStemIntelligence.Bell(rate,a.eqHz,1.0,a.eqDb);
+            }
         }
         double peak=0;
         float[] mix=new float[BLOCK*2];
@@ -206,9 +237,16 @@ public final class AutoMixEngine {
                     WavReader r=readers.get(t);
                     double a=buffer[t][f*r.channels]*gains[t];
                     double b=r.channels==1?a:buffer[t][f*2+1]*gains[t];
-                    // Preserve original spectral/phase content for two-stem sources.
-                    left+=n==2?a:filters[t][0].process(a);
-                    right+=n==2?b:filters[t][1].process(b);
+                    // Preserve the original two-stem mix and four-stem reference.
+                    // Intelligent EQ acts only where measured co-activity warrants a cut.
+                    if(n==3){
+                        a=filters[t][0].process(a);
+                        b=filters[t][1].process(b);
+                    }
+                    if(eq[t][0]!=null) a=eq[t][0].process(a);
+                    if(eq[t][1]!=null) b=eq[t][1].process(b);
+                    left+=a;
+                    right+=b;
                 }
                 peak=Math.max(peak,Math.max(Math.abs(left),Math.abs(right)));
                 if(out!=null){
