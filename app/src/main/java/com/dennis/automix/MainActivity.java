@@ -57,7 +57,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         TextView title=text("DENNIS",12,ACCENT,true);root.addView(title);
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
-        TextView subtitle=text("OFFLINE  •  INTELLIGENT WAV MIXING  •  v0.1.1",11,MUTED,false);
+        TextView subtitle=text("OFFLINE  •  INTELLIGENT WAV MIXING  •  v0.2.0",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
 
         LinearLayout importPanel=panel(root);
@@ -77,7 +77,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout mixPanel=panel(root);
         mixPanel.addView(text("02  AUTOMATIC MIX",14,TEXT,true));
-        TextView mixHelp=text("Two-stem: preserve original stem balance and optionally render a +1 dB vocal-focus comparison. Four-stem: guarded automatic balancing. Mix-only premaster.",12,MUTED,false);
+        TextView mixHelp=text("Two-stem: preserves original balance (+1 dB vocal A/B). Four-stem: analyzes co-active vocal/instrument masking, makes gentle EQ/level changes, and exports a transparent reference.",12,MUTED,false);
         mixHelp.setPadding(0,dp(8),0,dp(8));
         mixPanel.addView(mixHelp);
         run=button("AUTO MIX WAV TRACKS",true);
@@ -96,7 +96,7 @@ public final class MainActivity extends Activity {
         summary=text("Processing: 24-bit stereo WAV with 6 dBFS sample-peak headroom. This is a premaster, not a mastered release.",12,MUTED,false);
         summary.setPadding(0,dp(8),0,dp(7));
         exportPanel.addView(summary);
-        save=button("SAVE ORIGINAL-BALANCE PREMASTER",true);
+        save=button("SAVE AUTO MIX PREMASTER",true);
         saveAlt=button("SAVE VOCAL +1 dB COMPARISON",false);
         qc=button("Save mix QC / recipe JSON",false);
         exportPanel.addView(save);exportPanel.addView(saveAlt);exportPanel.addView(qc);
@@ -117,7 +117,7 @@ public final class MainActivity extends Activity {
         save.setOnClickListener(v->saveDocument(SAVE_WAV,"audio/wav",
                  "AutoMix_Premaster_24bit.wav"));
         saveAlt.setOnClickListener(v->saveDocument(SAVE_ALT,"audio/wav",
-                 "AutoMix_VocalFocusPlus1dB_24bit.wav"));
+                 alternate!=null?alternate.getName():"AutoMix_Comparison_24bit.wav"));
         qc.setOnClickListener(v->saveDocument(SAVE_QC,"application/json",
                  "AutoMix_Mix_QC.json"));
         updateTracks();updateButtons();
@@ -255,26 +255,34 @@ public final class MainActivity extends Activity {
                         progress.setProgress(pct);
                         status.setText(pct+"%  •  "+message);
                     }));
-                AutoMixEngine.Result focused=null;
-                File focusedFile=null;
+                AutoMixEngine.Result comparison=null;
+                File comparisonFile=null;
                 if(input.size()==2 && hasNamedVocal(input)){
                     runOnUiThread(()->setBusy(true,"Rendering vocal-focus comparison..."));
-                    focusedFile=new File(outputFolder(),"AutoMix_VocalFocusPlus1dB_24bit.wav");
-                    focused=AutoMixEngine.mix(input,focusedFile,AutoMixEngine.MixMode.VOCAL_FOCUS,null);
+                    comparisonFile=new File(outputFolder(),"AutoMix_VocalFocusPlus1dB_24bit.wav");
+                    comparison=AutoMixEngine.mix(input,comparisonFile,AutoMixEngine.MixMode.VOCAL_FOCUS,null);
+                }else if(input.size()==4){
+                    runOnUiThread(()->setBusy(true,"Rendering four-stem transparent reference..."));
+                    comparisonFile=new File(outputFolder(),"AutoMix_4Stem_Reference_24bit.wav");
+                    comparison=AutoMixEngine.mix(input,comparisonFile,AutoMixEngine.MixMode.STEM_REFERENCE,null);
                 }
-                final AutoMixEngine.Result focusResult=focused;
-                final File finalFocusedFile=focusedFile;
-                JSONObject report=makeReport(result,focusResult);
+                final AutoMixEngine.Result compareResult=comparison;
+                final File finishedComparison=comparisonFile;
+                JSONObject report=makeReport(result,compareResult);
                 File qcOutput=new File(outputFolder(),"AutoMix_Mix_QC.json");
                 try(Writer writer=new OutputStreamWriter(new FileOutputStream(qcOutput),"UTF-8")){
                     writer.write(report.toString(2));
                 }
                 runOnUiThread(()->{
-                    rendered=output;alternate=finalFocusedFile;qcFile=qcOutput;
+                    rendered=output;alternate=finishedComparison;qcFile=qcOutput;
+                    save.setText(result.tracks.size()==2?
+                        "SAVE ORIGINAL-BALANCE PREMASTER":"SAVE AUTO MIX PREMASTER");
+                    saveAlt.setText(result.tracks.size()==4?
+                        "SAVE 4-STEM TRANSPARENT REFERENCE":"SAVE VOCAL +1 dB COMPARISON");
                     String note=String.format(Locale.US,
                       "PREMASTER READY\n%d tracks · %d Hz · 24-bit stereo\nPeak %.2f dBFS (sample) · trim %.2f dB\n%s\nNot mastered: A/B compare before mastering.",
                       result.tracks.size(),result.sampleRate,result.peakDbFs,result.outputGainDb,
-                      finalFocusedFile!=null?"Unity stem balance plus +1 dB vocal A/B candidate":"Guarded automatic stem mix");
+                      result.mixNote);
                     summary.setText(note);
                     setBusy(false,"Mix complete. Use Save Premaster WAV to export.");
                     getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -295,9 +303,12 @@ public final class MainActivity extends Activity {
     private JSONObject makeReport(AutoMixEngine.Result r,AutoMixEngine.Result focus)throws Exception{
         JSONObject result=new JSONObject();
         result.put("application","Dennis AI AutoMix Studio");
-        result.put("version","0.1.1");
+        result.put("version","0.2.0");
         result.put("mix_mode",r.mode.name());
         result.put("two_stem_unity_balance",r.tracks.size()==2);
+        result.put("four_stem_roles_verified",r.fourStemRecognized);
+        result.put("coactive_seconds",r.coactiveSeconds);
+        result.put("mix_plan",r.mixNote);
         result.put("type","mix-only premaster; not mastered");
         result.put("sample_rate",r.sampleRate);
         result.put("frames",r.frames);
@@ -306,10 +317,13 @@ public final class MainActivity extends Activity {
         result.put("output_trim_db",r.outputGainDb);
         result.put("original_mix_peak",r.preScalePeak);
         result.put("target_peak_dbfs_sample",-6.0);
-        result.put("processing",r.tracks.size()==2?"transparent sum, no EQ/HPF, sample-peak trim only":"bounded role gains and gentle HPF, sample-peak trim");
+        result.put("processing",r.tracks.size()==2?"transparent two-stem sum, no EQ, sample-peak trim only":
+            r.tracks.size()==4?"co-active analysis, guarded subtractive EQ and level decisions (if justified), peak trim":
+            "legacy three-stem gains and HPF, sample-peak trim");
         if(focus!=null){
             JSONObject ab=new JSONObject();
-            ab.put("filename","AutoMix_VocalFocusPlus1dB_24bit.wav");
+            ab.put("filename",focus.mode==AutoMixEngine.MixMode.STEM_REFERENCE?
+                "AutoMix_4Stem_Reference_24bit.wav":"AutoMix_VocalFocusPlus1dB_24bit.wav");
             ab.put("mode",focus.mode.name());
             ab.put("peak_dbfs_sample",focus.peakDbFs);
             ab.put("output_trim_db",focus.outputGainDb);
@@ -317,6 +331,7 @@ public final class MainActivity extends Activity {
             for(AutoMixEngine.Analysis a:focus.tracks){
                 JSONObject track=new JSONObject();
                 track.put("name",a.name);track.put("gain_db",a.gainDb);
+                track.put("eq_db",a.eqDb);track.put("eq_hz",a.eqHz);
                 gains.put(track);
             }
             ab.put("tracks",gains);
@@ -327,11 +342,12 @@ public final class MainActivity extends Activity {
             JSONObject s=new JSONObject();
             s.put("name",a.name);s.put("role",a.role);
             s.put("peak_linear",a.peak);s.put("active_rms_linear",a.activeRms);
-            s.put("gain_db",a.gainDb);s.put("frames",a.frames);s.put("channels",a.channels);
+            s.put("gain_db",a.gainDb);s.put("eq_db",a.eqDb);s.put("eq_hz",a.eqHz);
+            s.put("frames",a.frames);s.put("channels",a.channels);
             stems.put(s);
         }
         result.put("tracks",stems);
-        result.put("note","No true-peak measurement or loudness mastering in v0.1.1. Level-match before A/B listening.");
+        result.put("note","No true-peak measurement or loudness mastering in v0.2.0. A/B audition should be loudness-matched.");
         return result;
     }
     private String getFilename(Uri uri){

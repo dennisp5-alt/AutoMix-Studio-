@@ -112,7 +112,69 @@ public final class AutoMixEngineTest {
                  tmp.resolve("bad_float_output.wav").toFile(),null);
         }catch(IOException expected){rejectedNonFinite=true;}
         verify(rejectedNonFinite,"Must reject NaN samples");
-        System.out.println("PASS: WAV IO (24-bit PCM, mono 16-bit, float32), 2/4-track mix, peak and gain guards, failure preservation, format validation");
+
+        // Four-stem planner: overlap-driven conservative processing and
+        // a completely transparent four-stem reference candidate.
+        File v4=tone(tmp,"Lead_Vocals_Masking.wav",2500,.09,2,rate,frames);
+        File d4=tone(tmp,"Drums_Masking.wav",95,.14,2,rate,frames);
+        File b4=tone(tmp,"Bass_Masking.wav",75,.16,2,rate,frames);
+        File o4=tone(tmp,"Other_Masking.wav",2500,.24,2,rate,frames);
+        List<AutoMixEngine.Track> four=Arrays.asList(
+            new AutoMixEngine.Track("Vocals",v4),
+            new AutoMixEngine.Track("Drums",d4),
+            new AutoMixEngine.Track("Bass",b4),
+            new AutoMixEngine.Track("Other",o4));
+        AutoMixEngine.Result intelligent=AutoMixEngine.mix(
+            four,tmp.resolve("intelligent.wav").toFile(),null);
+        AutoMixEngine.Result baseFour=AutoMixEngine.mix(
+            four,tmp.resolve("reference4.wav").toFile(),AutoMixEngine.MixMode.STEM_REFERENCE,null);
+        verify(intelligent.fourStemRecognized,"Must recognize four unique roles");
+        verify(intelligent.coactiveSeconds>.9,"Simultaneous vocal/other detection");
+        verify(intelligent.tracks.get(3).gainDb<-.29 &&
+               intelligent.tracks.get(3).gainDb>=-.91,"Other level bounded cut");
+        verify(intelligent.tracks.get(3).eqDb<-.70 &&
+               intelligent.tracks.get(3).eqDb>=-.76,"2.5kHz evidence-based EQ engaged");
+        verify(baseFour.tracks.get(3).gainDb==0 &&
+               baseFour.tracks.get(3).eqDb==0,"Four-stem A/B preserves source settings");
+        verify(baseFour.mode==AutoMixEngine.MixMode.STEM_REFERENCE,
+               "Four-stem reference mode");
+        verify(intelligent.peakDbFs<=-5.99 && baseFour.peakDbFs<=-5.99,
+               "Both four-stem paths preserve peak ceiling");
+        try(AutoMixEngine.WavReader rw=new AutoMixEngine.WavReader(baseFour.output);
+            AutoMixEngine.WavReader r0=new AutoMixEngine.WavReader(v4);
+            AutoMixEngine.WavReader r1=new AutoMixEngine.WavReader(d4);
+            AutoMixEngine.WavReader r2=new AutoMixEngine.WavReader(b4);
+            AutoMixEngine.WavReader r3=new AutoMixEngine.WavReader(o4)){
+            float[] dest=new float[8192],p0=new float[8192],p1=new float[8192],
+                    p2=new float[8192],p3=new float[8192];
+            rw.read(dest,4096);r0.read(p0,4096);r1.read(p1,4096);
+            r2.read(p2,4096);r3.read(p3,4096);
+            double scale=Math.pow(10.0,baseFour.outputGainDb/20.0);
+            for(int i=10;i<6000;i++)verify(
+                Math.abs(dest[i]-(p0[i]+p1[i]+p2[i]+p3[i])*scale)<0.000002,
+                "Four-stem reference must be transparent");
+        }
+        List<AutoMixEngine.Track> unnamed=Arrays.asList(
+            new AutoMixEngine.Track("A.wav",v4),
+            new AutoMixEngine.Track("B.wav",d4),
+            new AutoMixEngine.Track("C.wav",b4),
+            new AutoMixEngine.Track("D.wav",o4));
+        AutoMixEngine.Result unlabeled=AutoMixEngine.mix(
+            unnamed,tmp.resolve("unnamed.wav").toFile(),null);
+        verify(!unlabeled.fourStemRecognized,"Ambiguous roles must not trigger IQ processing");
+        for(AutoMixEngine.Analysis a:unlabeled.tracks)
+            verify(a.gainDb==0&&a.eqDb==0,"Ambiguous four-stem output must be unity");
+        File quietOther=tone(tmp,"Other_Quiet.wav",2500,.005,2,rate,frames);
+        List<AutoMixEngine.Track> quiet=Arrays.asList(
+           new AutoMixEngine.Track("Vocals",v4),
+           new AutoMixEngine.Track("Drums",d4),
+           new AutoMixEngine.Track("Bass",b4),
+           new AutoMixEngine.Track("Other",quietOther));
+        AutoMixEngine.Result guarded=AutoMixEngine.mix(
+             quiet,tmp.resolve("guarded.wav").toFile(),null);
+        verify(guarded.tracks.get(3).eqDb==0 && guarded.tracks.get(3).gainDb==0,
+               "Quiet non-masking other stem must not receive EQ");
+        System.out.println("PASS: WAV IO, two-stem continuity, four-stem coactivity and guarded EQ, reference transparency, peak-safety, invalid roles");
     }
     private static void writeU16(DataOutputStream s,int v)throws IOException {
         s.writeByte(v&255);s.writeByte((v>>8)&255);

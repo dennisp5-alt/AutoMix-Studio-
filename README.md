@@ -2,6 +2,15 @@
 
 Independent, offline Android four-track automatic WAV mixing prototype for the Samsung Galaxy S23 Ultra.
 
+## v0.2.0: four-stem intelligent mixing experiment
+- Four appropriately named and aligned stems (Vocals, Drums, Bass, Other) receive conservative **co-active passage analysis**. Whole-song average volume differences are not treated as proof of imbalance.
+- When vocal and Other instrument stems overlap for enough material, the engine may lower Other by up to 0.9 dB based on their simultaneous energy and apply a maximum -0.75 dB, Q=1 bell cut at 2.5 kHz to Other only if presence masking evidence is adequate. Vocals, drums and bass are never automatically boosted in this stage.
+- Changes must be backed by co-active measurements; when files have missing/ambiguous roles or insufficient evidence, use unity gains and no EQ instead.
+- A second **four-stem transparent reference** is generated with all input gains at unity, no EQ and only a global sample-peak safety trim. A/B with the automatic mix before assuming any improvement.
+- Both exports are stereo 24-bit premaster WAVs with a -6 dBFS **sample-peak** ceiling; the JSON report includes per-stem gains, EQ, roles and decision note.
+- The 2-stem AUTO and vocal-focus +1 dB logic from v0.1.1 is unchanged. Three-stem legacy path unchanged. No compressor, no stereo widening, no AI stem generation, no mastering.
+- The v0.2.0 test uses a separate app ID `com.dennis.automix.test020` to allow comparison with previous debug-signed test versions.
+
 ## v0.1.1: two-stem balance correction
 The Old Girl exposed an undesirable +6.23 dB relative vocal shift in v0.1.0.
 Two-stem AUTO now preserves both input gains at unity and bypasses the high-pass filters; only a common sample-peak safety trim is permitted. VOCAL_FOCUS is a separate optional +1 dB vocal candidate for A/B comparison. This avoids interpreting vocal rests as a mixing imbalance.

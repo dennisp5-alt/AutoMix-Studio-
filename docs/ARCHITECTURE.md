@@ -33,3 +33,12 @@
 
 ## Integration checkpoint
 Before integrating mastering, reconstruct and regression-test a versioned **copy** of Dennis AI Mastering Lab v0.15.7 in an isolated module. Preserve existing outputs and compare LUFS, peak, transients, tonal shift and runtime. No changes to Mastering Lab's original repository or APK.
+
+## v0.2.0 experimental four-stem branch
+1. Detect exactly four unique filename roles: vocals, drums, bass, other (or instruments).
+2. Analyze ~85 ms co-active vocal and Other windows at the source sample rate; band-pass at 2.5 kHz, plus wideband concurrent RMS.
+3. Require >= 1 second AND >= 3% of the timeline as credible co-active material before corrections.
+4. Other is allowed at most -0.9 dB level trim; optional fixed -0.75 dB 2.5 kHz Q=1 peaking EQ only when evidence supports presence masking.
+5. Preserve existing two-stem branch; a new STEM_REFERENCE mode renders unity-gain, EQ-free 4-stem reference.
+6. Output -6 dBFS sample-peak bounded WAVs and QC JSON. True peak, LUFS and musical superiority are **not** measured or asserted by the Android app.
+7. Mastering integration is out of scope, and the source repository for Dennis AI Mastering Lab is not modified.
