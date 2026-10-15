@@ -58,7 +58,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         TextView title=text("DENNIS",12,ACCENT,true);root.addView(title);
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
-        TextView subtitle=text("OFFLINE  •  WAV PREMIX  •  v0.2.1 TEST",11,MUTED,false);
+        TextView subtitle=text("OFFLINE  •  WAV PREMIX  •  v0.2.2 ZIP FIX",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
 
         LinearLayout importPanel=panel(root);
@@ -308,7 +308,7 @@ public final class MainActivity extends Activity {
     private JSONObject makeReport(AutoMixEngine.Result r,AutoMixEngine.Result focus)throws Exception{
         JSONObject result=new JSONObject();
         result.put("application","Dennis AI AutoMix Studio");
-        result.put("version","0.2.1-test");
+        result.put("version","0.2.2-test");
         result.put("multi_stem_source_levels_preserved",r.tracks.size()>4);
         result.put("mix_mode",r.mode.name());
         result.put("two_stem_unity_balance",r.tracks.size()==2);
