@@ -245,8 +245,8 @@ public final class MainActivity extends Activity {
         setBusy(true,"Analysing tracks...");
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         executor.execute(()->{
-            File output=new File(outputFolder(),"AutoMix_Premaster_24bit.wav");
             try{
+                File output=new File(outputFolder(),"AutoMix_Premaster_24bit.wav");
                 AutoMixEngine.Result result=AutoMixEngine.mix(input,output,
                     (pct,message)->runOnUiThread(()->{
                         progress.setProgress(pct);
