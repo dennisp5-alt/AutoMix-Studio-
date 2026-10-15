@@ -174,7 +174,65 @@ public final class AutoMixEngineTest {
              quiet,tmp.resolve("guarded.wav").toFile(),null);
         verify(guarded.tracks.get(3).eqDb==0 && guarded.tracks.get(3).gainDb==0,
                "Quiet non-masking other stem must not receive EQ");
-        System.out.println("PASS: WAV IO, two-stem continuity, four-stem coactivity and guarded EQ, reference transparency, peak-safety, invalid roles");
+        // Multi-stem capacity regression: 5, 8 and 12 aligned independent WAV inputs.
+        // The 5–12 stem extension must not infer independent channel gains from
+        // whole-song average RMS; its initial quality-safe mix is a transparent sum.
+        List<AutoMixEngine.Track> twelve=new ArrayList<>();
+        for(int i=0;i<12;i++){
+            File one=tone(tmp,String.format(Locale.US,"Stem_%02d.wav",i),
+                          110+i*37,.010+i*.002,2,rate,frames);
+            twelve.add(new AutoMixEngine.Track(one.getName(),one));
+        }
+        for(int trackCount:new int[]{5,8,12}){
+            List<AutoMixEngine.Track> many=twelve.subList(0,trackCount);
+            File out=tmp.resolve("multistem_"+trackCount+".wav").toFile();
+            AutoMixEngine.Result mult=AutoMixEngine.mix(many,out,null);
+            verify(mult.tracks.size()==trackCount,"All multi-stem inputs must appear in QC");
+            verify(mult.sampleRate==rate&&mult.frames==frames,"Multi-stem duration/sample rate");
+            verify(mult.peakDbFs<=-5.99,"Multi-stem safe -6dBFS sample peak ceiling");
+            verify(mult.mixNote.contains("transparent mix"),"Truthful multi-stem strategy note");
+            for(AutoMixEngine.Analysis a:mult.tracks){
+                verify(a.gainDb==0&&a.eqDb==0,
+                       "Multi-stem preservation must not modify individual tracks");
+            }
+            try(AutoMixEngine.WavReader mixReader=new AutoMixEngine.WavReader(out)){
+                List<AutoMixEngine.WavReader> sources=new ArrayList<>();
+                try{
+                    for(AutoMixEngine.Track t:many)sources.add(new AutoMixEngine.WavReader(t.file));
+                    float[] observed=new float[4096*2];
+                    float[][] originals=new float[trackCount][4096*2];
+                    verify(mixReader.read(observed,4096)==4096,"Complete multi-stem first block");
+                    for(int i=0;i<trackCount;i++)
+                        verify(sources.get(i).read(originals[i],4096)==4096,"Complete source first block");
+                    double commonScale=Math.pow(10,mult.outputGainDb/20.0);
+                    for(int i=8;i<7000;i++){
+                        double expected=0;
+                        for(float[] stem:originals)expected+=stem[i];
+                        verify(Math.abs(observed[i]-expected*commonScale)<0.000003,
+                               "Multi-stem PCM must equal unity summation plus shared trim");
+                    }
+                }finally{for(AutoMixEngine.WavReader source:sources)source.close();}
+            }
+        }
+        boolean tooManyRejected=false;
+        try{
+            List<AutoMixEngine.Track> thirteen=new ArrayList<>(twelve);
+            thirteen.add(twelve.get(0));
+            AutoMixEngine.mix(thirteen,tmp.resolve("thirteen.wav").toFile(),null);
+        }catch(IOException expected){tooManyRejected=true;}
+        verify(tooManyRejected,"Thirteen tracks must be rejected");
+        verify(!Files.exists(tmp.resolve("thirteen.wav")),"Rejected thirteen-track job leaves no WAV");
+        // A missing stem must not overwrite a prior successfully mixed 12-stem premaster.
+        File good12=tmp.resolve("multistem_12.wav").toFile();
+        long preservedBytes=good12.length();
+        List<AutoMixEngine.Track> missingStem=new ArrayList<>(twelve);
+        missingStem.set(4,new AutoMixEngine.Track("Missing",tmp.resolve("no_such_stem.wav").toFile()));
+        boolean failed12=false;
+        try{AutoMixEngine.mix(missingStem,good12,null);}
+        catch(IOException expected){failed12=true;}
+        verify(failed12&&good12.length()==preservedBytes,
+               "Failed twelve-track render must preserve the last valid WAV");
+        System.out.println("PASS: WAV IO, two-stem continuity, four-stem coactivity and guarded EQ, reference transparency, peak-safety, invalid roles, and safe 5/8/12-stem streaming");
     }
     private static void writeU16(DataOutputStream s,int v)throws IOException {
         s.writeByte(v&255);s.writeByte((v>>8)&255);
