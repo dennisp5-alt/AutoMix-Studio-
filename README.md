@@ -36,3 +36,5 @@ File import is streamed into app-private storage with ZIP extraction limits. v0.
 2. Improve the mix decisions with masking-aware EQ, controlled dynamics and candidate scoring.
 3. Extract a stable, regression-tested **copy** of the established mastering DSP, with no changes to the original mastering app.
 4. Add waveform editing, track control, recipe editing and 8–16 track scaling.
+
+**Installability:** v0.1.1 test APK uses `com.dennis.automix.test011` so it can be installed alongside the older v0.1.0 debug APK, whose one-off CI debug signing key may differ. Persistent production signing should be configured before stable release builds.
