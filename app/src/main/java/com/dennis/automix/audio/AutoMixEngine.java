@@ -17,6 +17,7 @@ public final class AutoMixEngine {
     private static final double TARGET_PEAK = Math.pow(10.0, -6.0 / 20.0);
     private static final double MAX_STEM_GAIN_DB = 4.0;
     private AutoMixEngine() {}
+    public enum MixMode { AUTO, VOCAL_FOCUS }
 
     public interface Progress {
         void report(int percentage, String message);
@@ -45,8 +46,10 @@ public final class AutoMixEngine {
         public final long frames;
         public final double preScalePeak, peakDbFs, outputGainDb;
         public final List<Analysis> tracks;
+        public final MixMode mode;
         Result(File output, int rate, long frames, double preScalePeak, double peakDbFs,
-               double outputGainDb, List<Analysis> tracks) {
+               double outputGainDb, List<Analysis> tracks,MixMode mode) {
+            this.mode=mode;
             this.output=output; sampleRate=rate; this.frames=frames;
             this.preScalePeak=preScalePeak; this.peakDbFs=peakDbFs;
             this.outputGainDb=outputGainDb;
@@ -63,6 +66,10 @@ public final class AutoMixEngine {
         }
     }
     public static Result mix(List<Track> inputs, File output, Progress callback) throws IOException {
+        return mix(inputs,output,MixMode.AUTO,callback);
+    }
+    public static Result mix(List<Track> inputs, File output, MixMode mode, Progress callback) throws IOException {
+        if(mode==null)throw new IOException("Mix mode required.");
         if (inputs == null || inputs.size() < 2 || inputs.size() > 4)
             throw new IOException("Select between 2 and 4 WAV tracks.");
         if(output==null) throw new IOException("Output location required.");
@@ -111,6 +118,10 @@ public final class AutoMixEngine {
                 double dB=clamp(20*Math.log10(Math.max(0.0000001,g)),
                                 -MAX_STEM_GAIN_DB, MAX_STEM_GAIN_DB);
                 if(rms[i]<0.0000001) dB=0;
+                // Do not use whole-song RMS to rebalance separated two-stem productions.
+                // Vocal pauses and instrumental-only passages bias the global energy.
+                if(twoTrack) dB=(mode==MixMode.VOCAL_FOCUS &&
+                    "vocals".equals(role) && rms[i]>=0.0000001)?1.0:0.0;
                 gains[i]=Math.pow(10.0,dB/20.0);
                 Stats s=stats.get(i);
                 analyses.add(new Analysis(inputs.get(i).name,role,s.peak,rms[i],
@@ -138,7 +149,7 @@ public final class AutoMixEngine {
             if(callback!=null) callback.report(100,"Premaster finished");
             return new Result(output,rate,maxFrames,peak,
                     20*Math.log10(Math.max(0.000000000001,peak*scale)),
-                    20*Math.log10(scale),analyses);
+                    20*Math.log10(scale),analyses,mode);
         } finally {
             for(WavReader r:readers) try { r.close(); } catch(IOException ignored){}
             if(!success) unfinished.delete();
@@ -195,8 +206,9 @@ public final class AutoMixEngine {
                     WavReader r=readers.get(t);
                     double a=buffer[t][f*r.channels]*gains[t];
                     double b=r.channels==1?a:buffer[t][f*2+1]*gains[t];
-                    left+=filters[t][0].process(a);
-                    right+=filters[t][1].process(b);
+                    // Preserve original spectral/phase content for two-stem sources.
+                    left+=n==2?a:filters[t][0].process(a);
+                    right+=n==2?b:filters[t][1].process(b);
                 }
                 peak=Math.max(peak,Math.max(Math.abs(left),Math.abs(right)));
                 if(out!=null){

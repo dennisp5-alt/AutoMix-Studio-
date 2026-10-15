@@ -45,6 +45,30 @@ public final class AutoMixEngineTest {
             verify(w.read(b,4096)>0,"Readable data");
             verify(Math.abs(b[0]-b[1])<0.02,"Stereo channel relationship");
         }
+        // Original-balance two-stem render must have unity track gains, a separate
+        // vocal-focus candidate must change only vocal gain by +1 dB.
+        List<AutoMixEngine.Track> duo=Arrays.asList(
+            new AutoMixEngine.Track("Vocals",vocal),
+            new AutoMixEngine.Track("Instrumental",drums));
+        File transparent=tmp.resolve("transparent.wav").toFile();
+        File focus=tmp.resolve("focus.wav").toFile();
+        AutoMixEngine.Result ref=AutoMixEngine.mix(duo,transparent,null);
+        AutoMixEngine.Result candidate=AutoMixEngine.mix(duo,focus,AutoMixEngine.MixMode.VOCAL_FOCUS,null);
+        verify(Math.abs(ref.tracks.get(0).gainDb)<1e-10&&Math.abs(ref.tracks.get(1).gainDb)<1e-10,
+                "Auto 2-stem must preserve unity gains");
+        verify(Math.abs(candidate.tracks.get(0).gainDb-1.0)<1e-10
+               && Math.abs(candidate.tracks.get(1).gainDb)<1e-10,
+                "Vocal A/B candidate must only add 1 dB");
+        try(AutoMixEngine.WavReader rw=new AutoMixEngine.WavReader(transparent);
+            AutoMixEngine.WavReader rv=new AutoMixEngine.WavReader(vocal);
+            AutoMixEngine.WavReader ri=new AutoMixEngine.WavReader(drums)){
+            float[] a=new float[8192],b=new float[8192],o=new float[8192];
+            rw.read(o,4096);rv.read(a,4096);ri.read(b,4096);
+            double scale=Math.pow(10.0,ref.outputGainDb/20.0);
+            for(int i=20;i<7000;i++)
+                verify(Math.abs(o[i]-(a[i]+b[i])*scale)<0.000002,
+                       "Transparent sum must match originals up to common trim");
+        }
         boolean rejected=false;
         try{
             AutoMixEngine.mix(Arrays.asList(

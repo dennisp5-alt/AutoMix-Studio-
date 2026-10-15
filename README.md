@@ -2,6 +2,11 @@
 
 Independent, offline Android four-track automatic WAV mixing prototype for the Samsung Galaxy S23 Ultra.
 
+## v0.1.1: two-stem balance correction
+The Old Girl exposed an undesirable +6.23 dB relative vocal shift in v0.1.0.
+Two-stem AUTO now preserves both input gains at unity and bypasses the high-pass filters; only a common sample-peak safety trim is permitted. VOCAL_FOCUS is a separate optional +1 dB vocal candidate for A/B comparison. This avoids interpreting vocal rests as a mixing imbalance.
+The UI exposes both premaster exports where a filename identifies vocals. They are not mastered and are not guaranteed to sound better than the original.
+
 ## v0.1.0: scope
 - Load **2–4** mono/stereo WAVs (16/24/32-bit PCM or 32-bit IEEE float, including standard extensible WAV).
 - Import individual files or a ZIP of WAV stems through the Android document picker.
