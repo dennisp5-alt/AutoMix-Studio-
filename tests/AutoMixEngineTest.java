@@ -54,6 +54,66 @@ public final class AutoMixEngineTest {
         }catch(IOException expected){rejected=true;}
         verify(rejected,"Mismatch must be rejected");
         verify(!Files.exists(tmp.resolve("should_fail.wav")),"Failure cleanup");
-        System.out.println("PASS: WAV IO, 4-track offline mix, peak guard, gain guard, stereo and mismatch rejection");
+        long before=output.length();
+        boolean refused=false;
+        try{
+            AutoMixEngine.mix(Arrays.asList(
+                new AutoMixEngine.Track("A",vocal),
+                new AutoMixEngine.Track("B",tmp.resolve("missing.wav").toFile())),output,null);
+        }catch(IOException expected){refused=true;}
+        verify(refused && output.length()==before,"Failed mix preserves previous valid master");
+
+        File mono16=tmp.resolve("Vocals_mono16.wav").toFile();
+        makeWav(mono16,1,16,1,rate,frames,false);
+        File float32=tmp.resolve("Backing_float.wav").toFile();
+        makeWav(float32,2,32,3,rate,frames,false);
+        try(AutoMixEngine.WavReader r16=new AutoMixEngine.WavReader(mono16);
+            AutoMixEngine.WavReader r32=new AutoMixEngine.WavReader(float32)){
+            verify(r16.channels==1&&r16.bits==16,"Mono 16-bit input");
+            verify(r32.format==3&&r32.bits==32,"Float32 input");
+        }
+        File mixed=tmp.resolve("mix_formats.wav").toFile();
+        AutoMixEngine.Result result=AutoMixEngine.mix(Arrays.asList(
+           new AutoMixEngine.Track("Vocals",mono16),
+           new AutoMixEngine.Track("Backing",float32)),mixed,null);
+        verify(result.peakDbFs<=-5.99 && result.tracks.size()==2,"Mixed PCM16 / float32 input");
+
+        File notFinite=tmp.resolve("NaN_float.wav").toFile();
+        makeWav(notFinite,2,32,3,rate,frames,true);
+        boolean rejectedNonFinite=false;
+        try{
+            AutoMixEngine.mix(Arrays.asList(
+                 new AutoMixEngine.Track("Vocals",mono16),
+                 new AutoMixEngine.Track("Other",notFinite)),
+                 tmp.resolve("bad_float_output.wav").toFile(),null);
+        }catch(IOException expected){rejectedNonFinite=true;}
+        verify(rejectedNonFinite,"Must reject NaN samples");
+        System.out.println("PASS: WAV IO (24-bit PCM, mono 16-bit, float32), 2/4-track mix, peak and gain guards, failure preservation, format validation");
+    }
+    private static void writeU16(DataOutputStream s,int v)throws IOException {
+        s.writeByte(v&255);s.writeByte((v>>8)&255);
+    }
+    private static void writeU32(DataOutputStream s,long v)throws IOException {
+        for(int i=0;i<4;i++)s.writeByte((int)(v>>(i*8))&255);
+    }
+    private static void makeWav(File file,int channels,int bits,int format,int rate,int frames,boolean nan)throws IOException {
+        int bytes=channels*(bits/8);
+        try(DataOutputStream out=new DataOutputStream(new BufferedOutputStream(new FileOutputStream(file)))){
+            out.writeBytes("RIFF");writeU32(out,36L+frames*bytes);
+            out.writeBytes("WAVE");out.writeBytes("fmt ");
+            writeU32(out,16);writeU16(out,format);writeU16(out,channels);
+            writeU32(out,rate);writeU32(out,rate*bytes);
+            writeU16(out,bytes);writeU16(out,bits);
+            out.writeBytes("data");writeU32(out,frames*bytes);
+            for(int i=0;i<frames;i++){
+                float v=(float)(0.12*Math.sin(2*Math.PI*330*i/rate));
+                if(nan&&i==500)v=Float.NaN;
+                for(int ch=0;ch<channels;ch++){
+                    if(bits==16)writeU16(out,Math.round(v*32767));
+                    else writeU32(out,Float.floatToRawIntBits(v));
+                }
+            }
+        }
+
     }
 }
