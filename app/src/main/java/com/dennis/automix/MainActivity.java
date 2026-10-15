@@ -187,45 +187,47 @@ public final class MainActivity extends Activity {
             });
         }else if(request==IMPORT_ZIP){
             Uri uri=data.getData();if(uri==null)return;
-            setBusy(true,"Extracting WAV stems...");
+            setBusy(true,"Reading ZIP stem archive...");
             executor.execute(()->{
                 ArrayList<AutoMixEngine.Track> imported=new ArrayList<>();
-                try(InputStream raw=getContentResolver().openInputStream(uri)){
-                    if(raw==null)throw new IOException("Cannot open ZIP.");
-                    long total=0;
-                    try(ZipInputStream zis=new ZipInputStream(new BufferedInputStream(raw,64*1024))){
-                        ZipEntry entry;
-                        while((entry=zis.getNextEntry())!=null){
-                            if(entry.isDirectory()||!entry.getName().toLowerCase(Locale.ROOT).endsWith(".wav")){
-                                zis.closeEntry();continue;
-                            }
-                            if(imported.size()+tracks.size()>=MAX_TRACKS)
-                                throw new IOException("ZIP contains more WAVs than the 12-track limit.");
-                            String name=new File(entry.getName().replace('\\','/')).getName();
-                            File target=freshInput(name);
-                            long length=0;
-                            try(OutputStream out=new BufferedOutputStream(new FileOutputStream(target),64*1024)){
-                                byte[] b=new byte[64*1024];int n;
-                                while((n=zis.read(b))!=-1){
-                                    length+=n;total+=n;
-                                    if(length>MAX_FILE||total>MAX_ZIP)throw new IOException("ZIP audio exceeds safe import size.");
-                                    out.write(b,0,n);
-                                }
-                            }catch(Exception e){target.delete();throw e;}
-                            try(AutoMixEngine.WavReader unused=new AutoMixEngine.WavReader(target)){}
-                            catch(Exception e){target.delete();throw e;}
-                            imported.add(new AutoMixEngine.Track(name,target));
-                            zis.closeEntry();
+                List<com.dennis.automix.audio.ZipStemImporter.Stem> extracted=null;
+                File stagedZip=null;
+                try{
+                    File folder=inputFolder();
+                    stagedZip=File.createTempFile("automix_zip_",".zip",folder);
+                    // Stage to a seekable private file so ZipFile can trust the
+                    // central directory instead of inconsistent local headers.
+                    try(InputStream raw=getContentResolver().openInputStream(uri);
+                        OutputStream out=new BufferedOutputStream(new FileOutputStream(stagedZip),64*1024)){
+                        if(raw==null)throw new IOException("Cannot open ZIP.");
+                        long bytes=0;
+                        byte[] buffer=new byte[64*1024];
+                        int n;
+                        while((n=raw.read(buffer))!=-1){
+                            if(Thread.currentThread().isInterrupted())
+                                throw new IOException("ZIP import cancelled.");
+                            bytes+=n;
+                            if(bytes>MAX_ZIP)throw new IOException("ZIP archive is too large.");
+                            out.write(buffer,0,n);
                         }
                     }
-                    if(imported.isEmpty())throw new IOException("The ZIP contains no supported WAV files.");
+                    extracted=com.dennis.automix.audio.ZipStemImporter.extract(
+                        stagedZip,folder,tracks.size(),MAX_TRACKS,MAX_FILE,MAX_ZIP);
+                    for(com.dennis.automix.audio.ZipStemImporter.Stem stem:extracted){
+                        try(AutoMixEngine.WavReader unused=new AutoMixEngine.WavReader(stem.extractedFile)){}
+                        imported.add(new AutoMixEngine.Track(stem.filename,stem.extractedFile));
+                    }
                     runOnUiThread(()->{
                         tracks.addAll(imported);rendered=null;alternate=null;qcFile=null;
                         updateTracks();setBusy(false,"Imported "+imported.size()+" WAVs from ZIP.");
                     });
                 }catch(Exception e){
-                    for(AutoMixEngine.Track t:imported)t.file.delete();
+                    if(extracted!=null)
+                        for(com.dennis.automix.audio.ZipStemImporter.Stem stem:extracted)
+                            stem.extractedFile.delete();
                     failed(e);
+                }finally{
+                    if(stagedZip!=null)stagedZip.delete();
                 }
             });
         }else if(request==SAVE_WAV||request==SAVE_QC||request==SAVE_ALT){
