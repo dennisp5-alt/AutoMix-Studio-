@@ -33,7 +33,7 @@ jobs:
       - name: Verify APK and create named test package
         run: |
           unzip -tq app/build/outputs/apk/debug/app-debug.apk
-          aapt dump badging app/build/outputs/apk/debug/app-debug.apk | grep "launchable-activity: name='com.dennis.automix.MainActivity'"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep "launchable-activity: name='com.dennis.automix.MainActivity'"
           cp app/build/outputs/apk/debug/app-debug.apk Dennis-AutoMix-Studio-v0.1.0-TEST.apk
           sha256sum Dennis-AutoMix-Studio-v0.1.0-TEST.apk > SHA256SUMS.txt
       - name: Upload APK
