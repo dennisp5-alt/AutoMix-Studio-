@@ -14,6 +14,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
  */
 public final class AutoMixEngine {
     private static final int BLOCK = 4096;
+    public static final int MAX_TRACKS = 12;
     private static final double TARGET_PEAK = Math.pow(10.0, -6.0 / 20.0);
     private static final double MAX_STEM_GAIN_DB = 4.0;
     private AutoMixEngine() {}
@@ -77,8 +78,8 @@ public final class AutoMixEngine {
     }
     public static Result mix(List<Track> inputs, File output, MixMode mode, Progress callback) throws IOException {
         if(mode==null)throw new IOException("Mix mode required.");
-        if (inputs == null || inputs.size() < 2 || inputs.size() > 4)
-            throw new IOException("Select between 2 and 4 WAV tracks.");
+        if (inputs == null || inputs.size() < 2 || inputs.size() > MAX_TRACKS)
+            throw new IOException("Select between 2 and 12 WAV tracks.");
         if(output==null) throw new IOException("Output location required.");
         if(mode==MixMode.VOCAL_FOCUS && inputs.size()!=2)
             throw new IOException("Vocal focus is only available for two stems.");
@@ -110,7 +111,8 @@ public final class AutoMixEngine {
             for(int i=0;i<readers.size();i++) {
                 checkCancelled();
                 stats.add(scan(readers.get(i)));
-                if(callback!=null) callback.report(5+(i+1)*8,"Analysed "+inputs.get(i).name);
+                if(callback!=null) callback.report(inputs.size()<=4 ? 5+(i+1)*8 :
+                    5+(i+1)*33/inputs.size(),"Analysed "+inputs.get(i).name);
             }
             double[] rms=new double[stats.size()];
             for(int i=0;i<stats.size();i++) rms[i]=stats.get(i).rms();
@@ -139,6 +141,10 @@ public final class AutoMixEngine {
                 // A/B reference is unity and unprocessed; intelligent four-stem adjustments
                 // are limited to <=0.9 dB level trims and <=0.75 dB presence-band cut.
                 if(inputs.size()==4) dB=plan==null?0:plan.gainDb[i];
+                // For 5–12 stems, whole-song RMS is not reliable musical balance
+                // evidence: preserve source faders until multi-stem co-activity
+                // processing has its own listening-verified safety gates.
+                if(inputs.size()>4) dB=0;
                 double eqDb=plan==null?0:plan.eqDb[i];
                 double eqHz=plan==null?0:plan.eqHz[i];
                 gains[i]=Math.pow(10.0,dB/20.0);
@@ -171,7 +177,9 @@ public final class AutoMixEngine {
                     20*Math.log10(scale),analyses,mode,
                     plan!=null?plan.note:inputs.size()==4?
                       "Four-stem transparent reference; unity gains, no EQ.":
-                      inputs.size()==2?"Two-stem balance preserved.":"Legacy three-stem mix.",
+                      inputs.size()==2?"Two-stem balance preserved.":
+                      inputs.size()==3?"Legacy three-stem mix.":
+                      "Multi-stem transparent mix ("+inputs.size()+" tracks); source gains and EQ preserved; common peak trim only.",
                     plan!=null&&plan.recognized,
                     plan!=null?plan.coactiveSeconds:0);
         } finally {
