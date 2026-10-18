@@ -232,6 +232,85 @@ public final class AutoMixEngineTest {
         catch(IOException expected){failed12=true;}
         verify(failed12&&good12.length()==preservedBytes,
                "Failed twelve-track render must preserve the last valid WAV");
+        // v0.2.3: genuinely coactive guitar, keyboard and synth masking the lead
+        // must result in no more than TWO gentle corrections, leaving bass,
+        // drums, both vocal tracks, and ambiguous "Other" stems untouched.
+        final int multiFrames=rate*5;
+        List<AutoMixEngine.Track> group=new ArrayList<>();
+        String[] names={"0 Lead Vocals.wav","1 Backing Vocals.wav","2 Drums.wav",
+                        "3 Bass.wav","4 Guitar.wav","5 Keyboard.wav",
+                        "6 Synth.wav","7 Other.wav"};
+        double[] freq={2500,350,110,70,2500,2500,2500,440};
+        double[] amplitude={.06,.025,.10,.15,.27,.24,.22,.05};
+        for(int i=0;i<names.length;i++){
+            File f=tone(tmp,names[i],freq[i],amplitude[i],2,rate,multiFrames);
+            group.add(new AutoMixEngine.Track(names[i],f));
+        }
+        AutoMixEngine.Result proposed=AutoMixEngine.mix(group,
+            tmp.resolve("instrument_aware.wav").toFile(),null);
+        AutoMixEngine.Result untouched=AutoMixEngine.mix(group,
+            tmp.resolve("instrument_reference.wav").toFile(),
+            AutoMixEngine.MixMode.STEM_REFERENCE,null);
+        verify(proposed.multiStemRecognized && proposed.multiStemAdjusted,
+               "Evidence-based multi-stem mode should detect strong coactivity");
+        verify(untouched.mode==AutoMixEngine.MixMode.STEM_REFERENCE,
+               "Multi-stem baseline must be a separate reference");
+        int corrections=0;
+        for(int i=0;i<proposed.tracks.size();i++){
+            AutoMixEngine.Analysis a=proposed.tracks.get(i);
+            AutoMixEngine.Analysis b=untouched.tracks.get(i);
+            verify(b.gainDb==0&&b.eqDb==0,"Reference may not change input levels/tone");
+            verify(a.gainDb>=-.40001 && a.gainDb<=.00001,
+                   "Instrument gain must remain in narrow subtractive range");
+            verify(a.eqDb>=-.60001 && a.eqDb<=.00001,
+                   "Instrument EQ must remain in narrow subtractive range");
+            if(a.gainDb<-.0001||a.eqDb<-.0001){
+                corrections++;
+                verify(i>=4 && i<=6,"Only clearly named musical instruments are eligible");
+                verify(proposed.multiStemOverlapSeconds[i]>=3,
+                       "Instrument adjustment must have strong coactive evidence");
+            }
+        }
+        verify(corrections>0 && corrections<=2,
+               "No more than two instruments receive adjustments");
+        verify(proposed.peakDbFs<=-5.99 && untouched.peakDbFs<=-5.99,
+               "Reference and processed premaster must both have safe sample peaks");
+        // Confirm the 8-stem reference is an exact unity sum except common
+        // peak trim (24-bit PCM roundoff tolerance).
+        try(AutoMixEngine.WavReader w=new AutoMixEngine.WavReader(untouched.output)){
+            float[] resultSamples=new float[4096*2];
+            verify(w.read(resultSamples,4096)==4096,"Reference WAV readable");
+            List<AutoMixEngine.WavReader> sourceReaders=new ArrayList<>();
+            try {
+                for(AutoMixEngine.Track t:group)sourceReaders.add(new AutoMixEngine.WavReader(t.file));
+                float[][] originalSamples=new float[group.size()][4096*2];
+                for(int i=0;i<group.size();i++)sourceReaders.get(i).read(originalSamples[i],4096);
+                double g=Math.pow(10.0,untouched.outputGainDb/20.0);
+                for(int i=16;i<6800;i++){
+                    double sum=0;
+                    for(float[] sample:originalSamples)sum+=sample[i];
+                    verify(Math.abs(resultSamples[i]-g*sum)<.000003,
+                           "Unmodified 8-stem reference must equal source sum");
+                }
+            } finally {for(AutoMixEngine.WavReader w0:sourceReaders)w0.close();}
+        }
+        // Ambiguous leads must never result in speculative instrument changes.
+        List<AutoMixEngine.Track> noClearLead=new ArrayList<>(group);
+        noClearLead.set(0,new AutoMixEngine.Track("0 Vocals A.wav",group.get(0).file));
+        noClearLead.set(1,new AutoMixEngine.Track("1 Vocals B.wav",group.get(1).file));
+        AutoMixEngine.Result safeFallback=AutoMixEngine.mix(noClearLead,
+            tmp.resolve("ambiguous_multi.wav").toFile(),null);
+        verify(!safeFallback.multiStemAdjusted,
+               "Ambiguous lead vocals must leave all stems untouched");
+        for(AutoMixEngine.Analysis a:safeFallback.tracks)
+            verify(a.gainDb==0 && a.eqDb==0,
+                   "Ambiguous multi-stem mix must remain transparent");
+        boolean invalidReferenceCount=false;
+        try{AutoMixEngine.mix(group.subList(0,3),tmp.resolve("invalid3ref.wav").toFile(),
+            AutoMixEngine.MixMode.STEM_REFERENCE,null);}
+        catch(IOException expected){invalidReferenceCount=true;}
+        verify(invalidReferenceCount,"Reference mode refuses fewer than 4 stems");
+        System.out.println("PASS: v0.2.3 guarded 8-stem coactive decisions, max-two bounded cuts, safe fallback and transparent reference");
         System.out.println("PASS: WAV IO, two-stem continuity, four-stem coactivity and guarded EQ, reference transparency, peak-safety, invalid roles, and safe 5/8/12-stem streaming");
     }
     private static void writeU16(DataOutputStream s,int v)throws IOException {
