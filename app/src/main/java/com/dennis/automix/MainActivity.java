@@ -58,7 +58,7 @@ public final class MainActivity extends Activity {
         scroll.addView(root);
         TextView title=text("DENNIS",12,ACCENT,true);root.addView(title);
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
-        TextView subtitle=text("OFFLINE  •  WAV PREMIX  •  v0.2.2 ZIP FIX",11,MUTED,false);
+        TextView subtitle=text("OFFLINE  •  INSTRUMENT-AWARE MIXING  •  v0.2.3 TEST",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
 
         LinearLayout importPanel=panel(root);
@@ -78,7 +78,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout mixPanel=panel(root);
         mixPanel.addView(text("02  AUTOMATIC MIX",14,TEXT,true));
-        TextView mixHelp=text("2 stems: preserved balance (+1 dB vocal A/B). 4 stems: guarded co-active masking analysis plus reference. 5–12 stems: transparent, peak-safe premix; automatic instrument balancing is not yet validated.",12,MUTED,false);
+        TextView mixHelp=text("2 stems: original balance (+1 dB vocal A/B). 4 stems: existing guarded mix. 5–12: evidence-gated small corrections on up to two named instruments; transparent A/B reference included.",12,MUTED,false);
         mixHelp.setPadding(0,dp(8),0,dp(8));
         mixPanel.addView(mixHelp);
         run=button("AUTO MIX WAV TRACKS",true);
@@ -264,9 +264,10 @@ public final class MainActivity extends Activity {
                     runOnUiThread(()->setBusy(true,"Rendering vocal-focus comparison..."));
                     comparisonFile=new File(outputFolder(),"AutoMix_VocalFocusPlus1dB_24bit.wav");
                     comparison=AutoMixEngine.mix(input,comparisonFile,AutoMixEngine.MixMode.VOCAL_FOCUS,null);
-                }else if(input.size()==4){
-                    runOnUiThread(()->setBusy(true,"Rendering four-stem transparent reference..."));
-                    comparisonFile=new File(outputFolder(),"AutoMix_4Stem_Reference_24bit.wav");
+                }else if(input.size()>=4){
+                    runOnUiThread(()->setBusy(true,"Rendering transparent reference premaster..."));
+                    comparisonFile=new File(outputFolder(),input.size()==4?
+                        "AutoMix_4Stem_Reference_24bit.wav":"AutoMix_MultiStem_Reference_24bit.wav");
                     comparison=AutoMixEngine.mix(input,comparisonFile,AutoMixEngine.MixMode.STEM_REFERENCE,null);
                 }
                 final AutoMixEngine.Result compareResult=comparison;
@@ -283,6 +284,7 @@ public final class MainActivity extends Activity {
                     saveAlt.setText(result.tracks.size()==4?
                         "SAVE 4-STEM TRANSPARENT REFERENCE":
                          result.tracks.size()==2?"SAVE VOCAL +1 dB COMPARISON":
+                         result.tracks.size()>4?"SAVE TRANSPARENT REFERENCE":
                          "NO COMPARISON FOR THIS TRACK COUNT");
                     String note=String.format(Locale.US,
                       "PREMASTER READY\n%d tracks · %d Hz · 24-bit stereo\nPeak %.2f dBFS (sample) · trim %.2f dB\n%s\nNot mastered: A/B compare before mastering.",
@@ -308,8 +310,13 @@ public final class MainActivity extends Activity {
     private JSONObject makeReport(AutoMixEngine.Result r,AutoMixEngine.Result focus)throws Exception{
         JSONObject result=new JSONObject();
         result.put("application","Dennis AI AutoMix Studio");
-        result.put("version","0.2.2-test");
-        result.put("multi_stem_source_levels_preserved",r.tracks.size()>4);
+        result.put("version","0.2.3-test");
+        result.put("multi_stem_source_levels_preserved",r.tracks.size()>4&&!r.multiStemAdjusted);
+        result.put("multi_stem_coactive_analysis_recognized",r.multiStemRecognized);
+        result.put("multi_stem_corrections_applied",r.multiStemAdjusted);
+        result.put("max_auto_corrections_5_to_12_stems",2);
+        result.put("multi_stem_automatic_gain_floor_db",-0.40);
+        result.put("multi_stem_automatic_eq_floor_db",-0.60);
         result.put("mix_mode",r.mode.name());
         result.put("two_stem_unity_balance",r.tracks.size()==2);
         result.put("four_stem_roles_verified",r.fourStemRecognized);
@@ -326,11 +333,12 @@ public final class MainActivity extends Activity {
         result.put("processing",r.tracks.size()==2?"transparent two-stem sum, no EQ, sample-peak trim only":
             r.tracks.size()==4?"co-active analysis, guarded subtractive EQ and level decisions (if justified), peak trim":
             r.tracks.size()==3?"legacy three-stem gains and HPF, sample-peak trim":
-            "5–12 stem transparent sum; all source gains and tones retained; common sample-peak trim only");
+            "5–12 stem guarded co-active vocal/instrument analysis; at most two small subtractive instrument corrections, plus a separate transparent reference");
         if(focus!=null){
             JSONObject ab=new JSONObject();
             ab.put("filename",focus.mode==AutoMixEngine.MixMode.STEM_REFERENCE?
-                "AutoMix_4Stem_Reference_24bit.wav":"AutoMix_VocalFocusPlus1dB_24bit.wav");
+                r.tracks.size()==4?"AutoMix_4Stem_Reference_24bit.wav":
+                "AutoMix_MultiStem_Reference_24bit.wav":"AutoMix_VocalFocusPlus1dB_24bit.wav");
             ab.put("mode",focus.mode.name());
             ab.put("peak_dbfs_sample",focus.peakDbFs);
             ab.put("output_trim_db",focus.outputGainDb);
@@ -345,16 +353,18 @@ public final class MainActivity extends Activity {
             result.put("ab_candidate",ab);
         }
         JSONArray stems=new JSONArray();
-        for(AutoMixEngine.Analysis a:r.tracks){
+        for(int trackIndex=0;trackIndex<r.tracks.size();trackIndex++){
+            AutoMixEngine.Analysis a=r.tracks.get(trackIndex);
             JSONObject s=new JSONObject();
             s.put("name",a.name);s.put("role",a.role);
             s.put("peak_linear",a.peak);s.put("active_rms_linear",a.activeRms);
             s.put("gain_db",a.gainDb);s.put("eq_db",a.eqDb);s.put("eq_hz",a.eqHz);
             s.put("frames",a.frames);s.put("channels",a.channels);
+            if(r.tracks.size()>4)s.put("coactive_with_lead_vocal_seconds",r.multiStemOverlapSeconds[trackIndex]);
             stems.put(s);
         }
         result.put("tracks",stems);
-        result.put("note","No true-peak measurement or loudness mastering in v0.2.0. A/B audition should be loudness-matched.");
+        result.put("note","Premaster only: no true-peak measurement or loudness mastering. Match loudness for A/B listening before approving corrections.");
         return result;
     }
     private String getFilename(Uri uri){
