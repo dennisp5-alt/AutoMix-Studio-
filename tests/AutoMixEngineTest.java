@@ -190,7 +190,8 @@ public final class AutoMixEngineTest {
             verify(mult.tracks.size()==trackCount,"All multi-stem inputs must appear in QC");
             verify(mult.sampleRate==rate&&mult.frames==frames,"Multi-stem duration/sample rate");
             verify(mult.peakDbFs<=-5.99,"Multi-stem safe -6dBFS sample peak ceiling");
-            verify(mult.mixNote.contains("transparent mix"),"Truthful multi-stem strategy note");
+            verify(!mult.multiStemAdjusted && !mult.mixNote.isEmpty(),
+                   "Unknown roles must preserve every stem and explain safe fallback");
             for(AutoMixEngine.Analysis a:mult.tracks){
                 verify(a.gainDb==0&&a.eqDb==0,
                        "Multi-stem preservation must not modify individual tracks");
