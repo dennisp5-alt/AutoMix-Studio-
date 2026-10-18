@@ -1,7 +1,7 @@
-name: AutoMix Studio v0.2.2 — Android APK + DSP regression
+name: AutoMix Studio v0.2.3 — Android APK + DSP regression
 on:
   push:
-    branches: [main, experiment/automix-12-stems-v021]
+    branches: [main, experiment/automix-12-stems-v021, experiment/automix-intelligent-12stems-v023]
   workflow_dispatch:
 permissions:
   contents: write
@@ -26,7 +26,7 @@ jobs:
       - name: Host DSP regression
         run: |
           mkdir -p host-classes
-          javac -encoding UTF-8 -d host-classes app/src/main/java/com/dennis/automix/audio/AutoMixEngine.java app/src/main/java/com/dennis/automix/audio/FourStemIntelligence.java app/src/main/java/com/dennis/automix/audio/ZipStemImporter.java tests/AutoMixEngineTest.java tests/ZipStemImporterTest.java
+          javac -encoding UTF-8 -d host-classes app/src/main/java/com/dennis/automix/audio/AutoMixEngine.java app/src/main/java/com/dennis/automix/audio/FourStemIntelligence.java app/src/main/java/com/dennis/automix/audio/MultiStemIntelligence.java app/src/main/java/com/dennis/automix/audio/ZipStemImporter.java tests/AutoMixEngineTest.java tests/ZipStemImporterTest.java
           java -cp host-classes AutoMixEngineTest
           java -cp host-classes ZipStemImporterTest
       - name: Build installable debug APK
@@ -35,14 +35,14 @@ jobs:
         run: |
           unzip -tq app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk | grep "launchable-activity: name='com.dennis.automix.MainActivity'"
-          cp app/build/outputs/apk/debug/app-debug.apk Dennis-AutoMix-Studio-v0.2.2-TEST.apk
-          sha256sum Dennis-AutoMix-Studio-v0.2.2-TEST.apk > SHA256SUMS.txt
+          cp app/build/outputs/apk/debug/app-debug.apk Dennis-AutoMix-Studio-v0.2.3-TEST.apk
+          sha256sum Dennis-AutoMix-Studio-v0.2.3-TEST.apk > SHA256SUMS.txt
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Dennis-AutoMix-Studio-v0.2.2-TEST-APK
+          name: Dennis-AutoMix-Studio-v0.2.3-TEST-APK
           path: |
-            Dennis-AutoMix-Studio-v0.2.2-TEST.apk
+            Dennis-AutoMix-Studio-v0.2.3-TEST.apk
             SHA256SUMS.txt
           retention-days: 30
       - name: Publish downloadable private-repo prerelease
@@ -50,10 +50,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v0.2.2-test-${GITHUB_RUN_NUMBER}" \
-            Dennis-AutoMix-Studio-v0.2.2-TEST.apk SHA256SUMS.txt \
+          gh release create "v0.2.3-test-${GITHUB_RUN_NUMBER}" \
+            Dennis-AutoMix-Studio-v0.2.3-TEST.apk SHA256SUMS.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
-            --title "AutoMix Studio v0.2.2 — TEST build ${GITHUB_RUN_NUMBER}" \
-            --notes "Experimental offline 2–12 stem WAV premixer. Two- and four-stem DSP retained; 5–12 preserve source levels and EQ. Premaster only. SHA256SUMS.txt included." \
+            --title "AutoMix Studio v0.2.3 — TEST build ${GITHUB_RUN_NUMBER}" \
+            --notes "Experimental offline 2–12 stem WAV premixer. Two- and four-stem DSP preserved; 5–12 get evidence-gated subtle instrument corrections plus transparent reference. Premaster only." \
             --prerelease
