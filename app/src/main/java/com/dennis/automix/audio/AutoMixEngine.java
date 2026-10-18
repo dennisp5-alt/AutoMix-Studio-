@@ -52,12 +52,18 @@ public final class AutoMixEngine {
         public final String mixNote;
         public final boolean fourStemRecognized;
         public final double coactiveSeconds;
+        public final boolean multiStemRecognized, multiStemAdjusted;
+        public final double[] multiStemOverlapSeconds;
         Result(File output, int rate, long frames, double preScalePeak, double peakDbFs,
                double outputGainDb, List<Analysis> tracks,MixMode mode,
-               String mixNote,boolean fourStemRecognized,double coactiveSeconds) {
+               String mixNote,boolean fourStemRecognized,double coactiveSeconds,
+               boolean multiStemRecognized,boolean multiStemAdjusted,double[] multiStemOverlapSeconds) {
             this.mode=mode;this.mixNote=mixNote;
             this.fourStemRecognized=fourStemRecognized;
             this.coactiveSeconds=coactiveSeconds;
+            this.multiStemRecognized=multiStemRecognized;
+            this.multiStemAdjusted=multiStemAdjusted;
+            this.multiStemOverlapSeconds=multiStemOverlapSeconds.clone();
             this.output=output; sampleRate=rate; this.frames=frames;
             this.preScalePeak=preScalePeak; this.peakDbFs=peakDbFs;
             this.outputGainDb=outputGainDb;
@@ -83,8 +89,8 @@ public final class AutoMixEngine {
         if(output==null) throw new IOException("Output location required.");
         if(mode==MixMode.VOCAL_FOCUS && inputs.size()!=2)
             throw new IOException("Vocal focus is only available for two stems.");
-        if(mode==MixMode.STEM_REFERENCE && inputs.size()!=4)
-            throw new IOException("Four-stem reference requires exactly four WAVs.");
+        if(mode==MixMode.STEM_REFERENCE && inputs.size()<4)
+            throw new IOException("Transparent reference requires 4–12 WAVs.");
         List<WavReader> readers = new ArrayList<>();
         File unfinished=new File(output.getAbsolutePath()+".part");
         boolean success=false;
@@ -124,11 +130,17 @@ public final class AutoMixEngine {
             FourStemIntelligence.Plan plan=null;
             if(inputs.size()==4 && mode==MixMode.AUTO)
                 plan=FourStemIntelligence.inspect(inputs,readers,rms,rate);
+            MultiStemIntelligence.Plan multi=null;
+            if(inputs.size()>4 && mode==MixMode.AUTO){
+                if(callback!=null)callback.report(38,"Checking co-active instrument masking");
+                multi=MultiStemIntelligence.inspect(inputs,readers,rms,rate);
+            }
             double[] gains=new double[stats.size()];
             List<Analysis> analyses=new ArrayList<>();
             boolean twoTrack=inputs.size()==2;
             for(int i=0;i<stats.size();i++){
-                String role=role(inputs.get(i).name);
+                String role=inputs.size()>4?MultiStemIntelligence.classify(inputs.get(i).name):
+                    role(inputs.get(i).name);
                 double target=median*roleWeight(role,twoTrack);
                 double g=rms[i]<0.0000001?1.0:target/rms[i];
                 double dB=clamp(20*Math.log10(Math.max(0.0000001,g)),
@@ -141,12 +153,11 @@ public final class AutoMixEngine {
                 // A/B reference is unity and unprocessed; intelligent four-stem adjustments
                 // are limited to <=0.9 dB level trims and <=0.75 dB presence-band cut.
                 if(inputs.size()==4) dB=plan==null?0:plan.gainDb[i];
-                // For 5–12 stems, whole-song RMS is not reliable musical balance
-                // evidence: preserve source faders until multi-stem co-activity
-                // processing has its own listening-verified safety gates.
-                if(inputs.size()>4) dB=0;
-                double eqDb=plan==null?0:plan.eqDb[i];
-                double eqHz=plan==null?0:plan.eqHz[i];
+                // 5–12 stems use only gated, co-active evidence; transparent
+                // reference never applies per-stem changes.
+                if(inputs.size()>4) dB=multi==null?0:multi.gainDb[i];
+                double eqDb=plan!=null?plan.eqDb[i]:multi!=null?multi.eqDb[i]:0;
+                double eqHz=plan!=null?plan.eqHz[i]:multi!=null?multi.eqHz[i]:0;
                 gains[i]=Math.pow(10.0,dB/20.0);
                 Stats s=stats.get(i);
                 analyses.add(new Analysis(inputs.get(i).name,role,s.peak,rms[i],
@@ -175,13 +186,16 @@ public final class AutoMixEngine {
             return new Result(output,rate,maxFrames,peak,
                     20*Math.log10(Math.max(0.000000000001,peak*scale)),
                     20*Math.log10(scale),analyses,mode,
-                    plan!=null?plan.note:inputs.size()==4?
-                      "Four-stem transparent reference; unity gains, no EQ.":
+                    plan!=null?plan.note:multi!=null?multi.note:mode==MixMode.STEM_REFERENCE?
+                      "Transparent "+inputs.size()+"-stem reference; unity gains, no EQ; shared peak trim only.":
                       inputs.size()==2?"Two-stem balance preserved.":
                       inputs.size()==3?"Legacy three-stem mix.":
                       "Multi-stem transparent mix ("+inputs.size()+" tracks); source gains and EQ preserved; common peak trim only.",
                     plan!=null&&plan.recognized,
-                    plan!=null?plan.coactiveSeconds:0);
+                    plan!=null?plan.coactiveSeconds:0,
+                    multi!=null&&multi.recognized,
+                    multi!=null&&multi.adjusted,
+                    multi!=null?multi.overlapSeconds:new double[inputs.size()]);
         } finally {
             for(WavReader r:readers) try { r.close(); } catch(IOException ignored){}
             if(!success) unfinished.delete();
