@@ -60,6 +60,11 @@ public final class MainActivity extends Activity {
         TextView name=text("AutoMix Studio",29,TEXT,true);root.addView(name);
         TextView subtitle=text("OFFLINE  •  INSTRUMENT-AWARE MIXING  •  v0.2.3 TEST",11,MUTED,false);
         subtitle.setPadding(0,dp(4),0,dp(21));root.addView(subtitle);
+        Button stereoPremaster=button("STEREO WAV PREMASTER  •  NEW",true);
+        root.addView(stereoPremaster);
+        stereoPremaster.setOnClickListener(v->startActivity(
+            new Intent(this,StereoPremasterActivity.class)));
+
 
         LinearLayout importPanel=panel(root);
         importPanel.addView(text("01  IMPORT YOUR TRACKS",14,TEXT,true));
